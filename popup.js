@@ -10,11 +10,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Load current settings
   chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
-    const currentMode = result.viewMode || 'standard';
-    if (currentMode === 'collapsed') {
-      collapsedRadio.checked = true;
-    } else {
+    const currentMode = result.viewMode || 'collapsed';
+    if (currentMode === 'standard') {
       standardRadio.checked = true;
+    } else {
+      collapsedRadio.checked = true;
     }
     hideEmptyCheckbox.checked = result.hideEmptyFields || false;
     messagesPerBatchSelect.value = result.messagesPerBatch || '20';

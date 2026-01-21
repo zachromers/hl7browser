@@ -20,7 +20,7 @@
   // Load view mode setting and render
   if (typeof chrome !== 'undefined' && chrome.storage) {
     chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
-      const viewMode = result.viewMode || 'standard';
+      const viewMode = result.viewMode || 'collapsed';
       const hideEmptyFields = result.hideEmptyFields || false;
       const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
 
@@ -33,9 +33,9 @@
   } else {
     // Fallback if storage not available
     if (contentType === 'json') {
-      renderJSONContent(rawContent, 'standard', DEFAULT_MESSAGES_PER_BATCH);
+      renderJSONContent(rawContent, 'collapsed', DEFAULT_MESSAGES_PER_BATCH);
     } else {
-      renderHL7Content(rawContent, 'standard', false, DEFAULT_MESSAGES_PER_BATCH);
+      renderHL7Content(rawContent, 'collapsed', false, DEFAULT_MESSAGES_PER_BATCH);
     }
   }
 
