@@ -1,5 +1,5 @@
 // HL7 Browser - Content Script
-// Parses HL7 messages and provides interactive hover tooltips
+// Parses HL7 messages and JSON data with interactive viewing
 
 (function() {
   'use strict';
@@ -10,9 +10,11 @@
   // Get the raw text content of the page
   const rawContent = document.body.innerText || document.body.textContent;
 
-  // Check if this looks like HL7 content
-  if (!isHL7Content(rawContent)) {
-    return; // Not HL7 content, don't modify the page
+  // Detect content type
+  const contentType = detectContentType(rawContent);
+
+  if (!contentType) {
+    return; // Not supported content, don't modify the page
   }
 
   // Load view mode setting and render
@@ -21,11 +23,59 @@
       const viewMode = result.viewMode || 'standard';
       const hideEmptyFields = result.hideEmptyFields || false;
       const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
-      renderHL7Content(rawContent, viewMode, hideEmptyFields, messagesPerBatch);
+
+      if (contentType === 'json') {
+        renderJSONContent(rawContent, viewMode, messagesPerBatch);
+      } else {
+        renderHL7Content(rawContent, viewMode, hideEmptyFields, messagesPerBatch);
+      }
     });
   } else {
     // Fallback if storage not available
-    renderHL7Content(rawContent, 'standard', false, DEFAULT_MESSAGES_PER_BATCH);
+    if (contentType === 'json') {
+      renderJSONContent(rawContent, 'standard', DEFAULT_MESSAGES_PER_BATCH);
+    } else {
+      renderHL7Content(rawContent, 'standard', false, DEFAULT_MESSAGES_PER_BATCH);
+    }
+  }
+
+  /**
+   * Detect content type (json or hl7)
+   */
+  function detectContentType(content) {
+    const trimmed = content.trim();
+
+    // Check for JSON first
+    if (isJSONContent(trimmed)) {
+      return 'json';
+    }
+
+    // Check for HL7
+    if (isHL7Content(content)) {
+      return 'hl7';
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if the content appears to be JSON formatted
+   */
+  function isJSONContent(content) {
+    const trimmed = content.trim();
+
+    // Quick check: must start with { or [
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+      return false;
+    }
+
+    // Try to parse it
+    try {
+      JSON.parse(trimmed);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   /**
@@ -924,6 +974,265 @@
     document.querySelectorAll('.hl7-hover').forEach(el => {
       el.classList.remove('hl7-hover');
     });
+  }
+
+  // ========================================
+  // JSON RENDERING FUNCTIONS
+  // ========================================
+
+  /**
+   * Parse and render JSON content
+   */
+  function renderJSONContent(content, viewMode, messagesPerBatch) {
+    const parsed = JSON.parse(content.trim());
+
+    if (viewMode === 'collapsed') {
+      renderJSONCollapsedView(parsed, messagesPerBatch);
+    } else {
+      renderJSONStandardView(parsed, messagesPerBatch);
+    }
+  }
+
+  /**
+   * Get top-level items from JSON for pagination
+   * If array, each element is an item; if object, the whole thing is one item
+   */
+  function getJSONItems(parsed) {
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    return [parsed];
+  }
+
+  /**
+   * Render JSON in standard/textual view (formatted JSON)
+   */
+  function renderJSONStandardView(parsed, messagesPerBatch) {
+    const container = document.createElement('div');
+    container.className = 'hl7-container json-standard-view';
+
+    const items = getJSONItems(parsed);
+    const isArray = Array.isArray(parsed);
+
+    let renderedCount = 0;
+    const totalItems = items.length;
+
+    // Render first batch
+    renderedCount = renderJSONStandardBatch(container, items, 0, messagesPerBatch, isArray);
+
+    // Replace page content
+    document.body.innerHTML = '';
+    document.body.appendChild(container);
+
+    // Add "Load More" button if there are more items
+    if (renderedCount < totalItems) {
+      const loadMoreBtn = createLoadMoreButton(totalItems, renderedCount);
+      container.appendChild(loadMoreBtn);
+
+      loadMoreBtn.addEventListener('click', function() {
+        loadMoreBtn.remove();
+        const newCount = renderJSONStandardBatch(container, items, renderedCount, messagesPerBatch, isArray);
+        renderedCount = newCount;
+
+        if (renderedCount < totalItems) {
+          updateLoadMoreButton(loadMoreBtn, totalItems, renderedCount);
+          container.appendChild(loadMoreBtn);
+        }
+      });
+    }
+  }
+
+  /**
+   * Render a batch of JSON items in standard view
+   */
+  function renderJSONStandardBatch(container, items, startIndex, batchSize, isArray) {
+    const endIndex = Math.min(startIndex + batchSize, items.length);
+
+    for (let i = startIndex; i < endIndex; i++) {
+      if (i > 0) {
+        const separator = document.createElement('div');
+        separator.className = 'json-item-separator';
+        container.appendChild(separator);
+      }
+
+      const itemContainer = document.createElement('div');
+      itemContainer.className = 'json-item';
+
+      // Add item header for arrays
+      if (isArray && items.length > 1) {
+        const header = document.createElement('div');
+        header.className = 'json-item-header';
+        header.textContent = `Item ${i + 1}`;
+        itemContainer.appendChild(header);
+      }
+
+      const pre = document.createElement('pre');
+      pre.className = 'json-content';
+      pre.innerHTML = syntaxHighlightJSON(items[i]);
+      itemContainer.appendChild(pre);
+
+      container.appendChild(itemContainer);
+    }
+
+    return endIndex;
+  }
+
+  /**
+   * Syntax highlight JSON for standard view
+   */
+  function syntaxHighlightJSON(obj) {
+    const json = JSON.stringify(obj, null, 2);
+
+    return json.replace(
+      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+      function(match) {
+        let cls = 'json-number';
+        if (/^"/.test(match)) {
+          if (/:$/.test(match)) {
+            cls = 'json-key';
+          } else {
+            cls = 'json-string';
+          }
+        } else if (/true|false/.test(match)) {
+          cls = 'json-boolean';
+        } else if (/null/.test(match)) {
+          cls = 'json-null';
+        }
+        return '<span class="' + cls + '">' + escapeHtml(match) + '</span>';
+      }
+    );
+  }
+
+  /**
+   * Render JSON in collapsed/tree view
+   */
+  function renderJSONCollapsedView(parsed, messagesPerBatch) {
+    const container = document.createElement('div');
+    container.className = 'hl7-container json-collapsed-view';
+
+    const items = getJSONItems(parsed);
+    const isArray = Array.isArray(parsed);
+
+    let renderedCount = 0;
+    const totalItems = items.length;
+
+    // Render first batch
+    renderedCount = renderJSONCollapsedBatch(container, items, 0, messagesPerBatch, isArray);
+
+    // Replace page content
+    document.body.innerHTML = '';
+    document.body.appendChild(container);
+
+    // Add "Load More" button if there are more items
+    if (renderedCount < totalItems) {
+      const loadMoreBtn = createLoadMoreButton(totalItems, renderedCount);
+      container.appendChild(loadMoreBtn);
+
+      loadMoreBtn.addEventListener('click', function() {
+        loadMoreBtn.remove();
+        const newCount = renderJSONCollapsedBatch(container, items, renderedCount, messagesPerBatch, isArray);
+        renderedCount = newCount;
+
+        if (renderedCount < totalItems) {
+          updateLoadMoreButton(loadMoreBtn, totalItems, renderedCount);
+          container.appendChild(loadMoreBtn);
+        }
+      });
+    }
+
+    // Setup expand/collapse listeners (reuse HL7's)
+    setupCollapseListeners();
+  }
+
+  /**
+   * Render a batch of JSON items in collapsed view
+   */
+  function renderJSONCollapsedBatch(container, items, startIndex, batchSize, isArray) {
+    const endIndex = Math.min(startIndex + batchSize, items.length);
+
+    for (let i = startIndex; i < endIndex; i++) {
+      const itemNode = createJSONTreeNode(items[i], isArray ? `[${i}]` : 'root', i, isArray);
+      container.appendChild(itemNode);
+    }
+
+    return endIndex;
+  }
+
+  /**
+   * Create a tree node for JSON collapsed view
+   */
+  function createJSONTreeNode(value, key, index, isArrayItem) {
+    const nodeDiv = document.createElement('div');
+    nodeDiv.className = 'json-tree-node';
+
+    const valueType = getJSONValueType(value);
+    const isExpandable = valueType === 'object' || valueType === 'array';
+
+    if (isExpandable) {
+      // Expandable node (object or array)
+      const header = document.createElement('div');
+      header.className = 'hl7-tree-header json-tree-header collapsed';
+
+      const childCount = valueType === 'array' ? value.length : Object.keys(value).length;
+      const typeLabel = valueType === 'array' ? `Array[${childCount}]` : `Object{${childCount}}`;
+      const displayKey = isArrayItem ? `Item ${index + 1}` : key;
+
+      header.innerHTML = `
+        <span class="hl7-tree-toggle">&#9654;</span>
+        <span class="json-tree-key">${escapeHtml(displayKey)}</span>
+        <span class="json-tree-type">${typeLabel}</span>
+      `;
+      nodeDiv.appendChild(header);
+
+      // Content (children)
+      const content = document.createElement('div');
+      content.className = 'hl7-tree-content';
+      content.style.display = 'none';
+
+      if (valueType === 'array') {
+        value.forEach((item, idx) => {
+          const childNode = createJSONTreeNode(item, `[${idx}]`, idx, false);
+          content.appendChild(childNode);
+        });
+      } else {
+        Object.keys(value).forEach((k, idx) => {
+          const childNode = createJSONTreeNode(value[k], k, idx, false);
+          content.appendChild(childNode);
+        });
+      }
+
+      nodeDiv.appendChild(content);
+    } else {
+      // Leaf node (primitive value)
+      nodeDiv.className += ' json-tree-leaf';
+      const displayValue = formatJSONValue(value, valueType);
+
+      nodeDiv.innerHTML = `
+        <span class="json-tree-key">${escapeHtml(key)}</span>
+        <span class="json-tree-value json-${valueType}">${escapeHtml(displayValue)}</span>
+      `;
+    }
+
+    return nodeDiv;
+  }
+
+  /**
+   * Get the type of a JSON value
+   */
+  function getJSONValueType(value) {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) return 'array';
+    return typeof value;
+  }
+
+  /**
+   * Format a JSON value for display
+   */
+  function formatJSONValue(value, type) {
+    if (type === 'null') return 'null';
+    if (type === 'string') return `"${value}"`;
+    if (type === 'boolean') return value ? 'true' : 'false';
+    return String(value);
   }
 
 })();
