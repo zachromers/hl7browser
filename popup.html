@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <h1>HL7 Browser</h1>
+    <p class="description">Choose how to display HL7 messages</p>
+
+    <div class="view-options">
+      <label class="view-option">
+        <input type="radio" name="viewMode" value="standard" checked>
+        <div class="option-content">
+          <span class="option-icon">&#9776;</span>
+          <div class="option-text">
+            <span class="option-title">Standard View</span>
+            <span class="option-desc">Inline segments with hover tooltips</span>
+          </div>
+        </div>
+      </label>
+
+      <label class="view-option">
+        <input type="radio" name="viewMode" value="collapsed">
+        <div class="option-content">
+          <span class="option-icon">&#9660;</span>
+          <div class="option-text">
+            <span class="option-title">Collapsed View</span>
+            <span class="option-desc">Expandable tree with field details</span>
+          </div>
+        </div>
+      </label>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <button id="applyBtn" class="apply-btn">Apply & Reload Page</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
