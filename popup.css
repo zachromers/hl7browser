@@ -133,6 +133,95 @@ h1 {
   background-color: #0d5a8c;
 }
 
+/* Toggle section */
+.toggle-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background-color: #2d2d2d;
+  border-radius: 8px;
+}
+
+.toggle-option {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle-option input[type="checkbox"] {
+  display: none;
+}
+
+.toggle-switch {
+  width: 36px;
+  height: 20px;
+  background-color: #555555;
+  border-radius: 10px;
+  position: relative;
+  transition: background-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+}
+
+.toggle-option input:checked + .toggle-switch {
+  background-color: #4fc1ff;
+}
+
+.toggle-option input:checked + .toggle-switch::after {
+  transform: translateX(16px);
+}
+
+.toggle-label {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
+/* Select section */
+.select-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background-color: #2d2d2d;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.select-label {
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
+.select-input {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #d4d4d4;
+  background-color: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.select-input:hover {
+  border-color: #4c4c4c;
+}
+
+.select-input:focus {
+  outline: none;
+  border-color: #4fc1ff;
+}
+
 /* Light theme support */
 @media (prefers-color-scheme: light) {
   body {
@@ -183,5 +272,43 @@ h1 {
 
   .status.error {
     color: #cc0000;
+  }
+
+  .toggle-section {
+    background-color: #f5f5f5;
+  }
+
+  .toggle-switch {
+    background-color: #cccccc;
+  }
+
+  .toggle-option input:checked + .toggle-switch {
+    background-color: #0066cc;
+  }
+
+  .toggle-label {
+    color: #333333;
+  }
+
+  .select-section {
+    background-color: #f5f5f5;
+  }
+
+  .select-label {
+    color: #333333;
+  }
+
+  .select-input {
+    color: #333333;
+    background-color: #ffffff;
+    border-color: #cccccc;
+  }
+
+  .select-input:hover {
+    border-color: #999999;
+  }
+
+  .select-input:focus {
+    border-color: #0066cc;
   }
 }

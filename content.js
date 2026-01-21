@@ -4,6 +4,9 @@
 (function() {
   'use strict';
 
+  // Configuration defaults
+  const DEFAULT_MESSAGES_PER_BATCH = 20;
+
   // Get the raw text content of the page
   const rawContent = document.body.innerText || document.body.textContent;
 
@@ -14,13 +17,15 @@
 
   // Load view mode setting and render
   if (typeof chrome !== 'undefined' && chrome.storage) {
-    chrome.storage.sync.get(['viewMode'], function(result) {
+    chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
       const viewMode = result.viewMode || 'standard';
-      renderHL7Content(rawContent, viewMode);
+      const hideEmptyFields = result.hideEmptyFields || false;
+      const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
+      renderHL7Content(rawContent, viewMode, hideEmptyFields, messagesPerBatch);
     });
   } else {
     // Fallback if storage not available
-    renderHL7Content(rawContent, 'standard');
+    renderHL7Content(rawContent, 'standard', false, DEFAULT_MESSAGES_PER_BATCH);
   }
 
   /**
@@ -47,18 +52,18 @@
   /**
    * Parse and render the HL7 content with interactive elements
    */
-  function renderHL7Content(content, viewMode) {
+  function renderHL7Content(content, viewMode, hideEmptyFields, messagesPerBatch) {
     if (viewMode === 'collapsed') {
-      renderCollapsedView(content);
+      renderCollapsedView(content, hideEmptyFields, messagesPerBatch);
     } else {
-      renderStandardView(content);
+      renderStandardView(content, messagesPerBatch);
     }
   }
 
   /**
    * Render the standard inline view with hover tooltips
    */
-  function renderStandardView(content) {
+  function renderStandardView(content, messagesPerBatch) {
     // Create the main container
     const container = document.createElement('div');
     container.className = 'hl7-container hl7-standard-view';
@@ -68,8 +73,79 @@
     tooltip.className = 'hl7-tooltip';
     tooltip.style.display = 'none';
 
-    // Split content into lines
+    // Split content into lines and group by messages
     const lines = content.split(/\r?\n/);
+    const messageGroups = groupLinesByMessage(lines);
+
+    // State for pagination
+    let renderedCount = 0;
+    const totalMessages = messageGroups.length;
+
+    // Render first batch
+    renderedCount = renderStandardBatch(container, messageGroups, 0, messagesPerBatch);
+
+    // Replace page content
+    document.body.innerHTML = '';
+    document.body.appendChild(container);
+    document.body.appendChild(tooltip);
+
+    // Add "Load More" button if there are more messages
+    if (renderedCount < totalMessages) {
+      const loadMoreBtn = createLoadMoreButton(totalMessages, renderedCount);
+      container.appendChild(loadMoreBtn);
+
+      loadMoreBtn.addEventListener('click', function() {
+        // Remove the button temporarily
+        loadMoreBtn.remove();
+
+        // Render next batch
+        const newCount = renderStandardBatch(container, messageGroups, renderedCount, messagesPerBatch);
+        renderedCount = newCount;
+
+        // Add button back if still more to load
+        if (renderedCount < totalMessages) {
+          updateLoadMoreButton(loadMoreBtn, totalMessages, renderedCount);
+          container.appendChild(loadMoreBtn);
+        }
+      });
+    }
+
+    // Add event listeners for tooltips
+    setupTooltipListeners(tooltip);
+  }
+
+  /**
+   * Group lines by message (each message starts with MSH)
+   */
+  function groupLinesByMessage(lines) {
+    const messageGroups = [];
+    let currentGroup = [];
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (trimmedLine.startsWith('MSH')) {
+        if (currentGroup.length > 0) {
+          messageGroups.push(currentGroup);
+        }
+        currentGroup = [line];
+      } else {
+        currentGroup.push(line);
+      }
+    }
+
+    // Don't forget the last group
+    if (currentGroup.length > 0) {
+      messageGroups.push(currentGroup);
+    }
+
+    return messageGroups;
+  }
+
+  /**
+   * Render a batch of messages in standard view
+   */
+  function renderStandardBatch(container, messageGroups, startIndex, batchSize) {
+    const endIndex = Math.min(startIndex + batchSize, messageGroups.length);
 
     // Track message context (encoding characters)
     let fieldSeparator = '|';
@@ -78,140 +154,162 @@
     let escapeCharacter = '\\';
     let subcomponentSeparator = '&';
 
-    for (const line of lines) {
-      const trimmedLine = line.trim();
+    for (let m = startIndex; m < endIndex; m++) {
+      const messageLines = messageGroups[m];
 
-      if (!trimmedLine) {
-        // Empty line
+      // Add message separator if not the first message
+      if (m > 0) {
+        const separatorDiv = document.createElement('div');
+        separatorDiv.className = 'hl7-message-separator';
+        container.appendChild(separatorDiv);
+      }
+
+      for (const line of messageLines) {
+        const trimmedLine = line.trim();
+
+        if (!trimmedLine) {
+          // Empty line
+          const lineDiv = document.createElement('div');
+          lineDiv.className = 'hl7-line hl7-empty';
+          lineDiv.innerHTML = '&nbsp;';
+          container.appendChild(lineDiv);
+          continue;
+        }
+
+        const segmentId = trimmedLine.substring(0, 3);
+
+        if (!HL7_SEGMENT_IDS.includes(segmentId)) {
+          // Non-HL7 line (comment or other)
+          const lineDiv = document.createElement('div');
+          lineDiv.className = 'hl7-line hl7-comment';
+          lineDiv.textContent = trimmedLine;
+          container.appendChild(lineDiv);
+          continue;
+        }
+
+        // Parse MSH segment to get encoding characters
+        if (segmentId === 'MSH') {
+          if (trimmedLine.length > 3) {
+            fieldSeparator = trimmedLine[3];
+          }
+          if (trimmedLine.length > 7) {
+            const encodingChars = trimmedLine.substring(4, 8);
+            componentSeparator = encodingChars[0] || '^';
+            repetitionSeparator = encodingChars[1] || '~';
+            escapeCharacter = encodingChars[2] || '\\';
+            subcomponentSeparator = encodingChars[3] || '&';
+          }
+        }
+
+        // Create line container
         const lineDiv = document.createElement('div');
-        lineDiv.className = 'hl7-line hl7-empty';
-        lineDiv.innerHTML = '&nbsp;';
-        container.appendChild(lineDiv);
-        continue;
-      }
+        lineDiv.className = 'hl7-line';
+        lineDiv.dataset.segment = segmentId;
 
-      const segmentId = trimmedLine.substring(0, 3);
+        // Parse and render the segment
+        const parsedSegment = parseSegment(
+          trimmedLine,
+          segmentId,
+          fieldSeparator,
+          componentSeparator,
+          repetitionSeparator,
+          subcomponentSeparator
+        );
 
-      if (!HL7_SEGMENT_IDS.includes(segmentId)) {
-        // Non-HL7 line (comment or other)
-        const lineDiv = document.createElement('div');
-        lineDiv.className = 'hl7-line hl7-comment';
-        lineDiv.textContent = trimmedLine;
-        container.appendChild(lineDiv);
-        continue;
-      }
+        // Create segment name span
+        const segmentSpan = document.createElement('span');
+        segmentSpan.className = 'hl7-segment-id';
+        segmentSpan.textContent = segmentId;
+        segmentSpan.dataset.segment = segmentId;
+        segmentSpan.dataset.tooltipText = getSegmentTooltip(segmentId);
+        lineDiv.appendChild(segmentSpan);
 
-      // Parse MSH segment to get encoding characters
-      if (segmentId === 'MSH') {
-        if (trimmedLine.length > 3) {
-          fieldSeparator = trimmedLine[3];
-        }
-        if (trimmedLine.length > 7) {
-          const encodingChars = trimmedLine.substring(4, 8);
-          componentSeparator = encodingChars[0] || '^';
-          repetitionSeparator = encodingChars[1] || '~';
-          escapeCharacter = encodingChars[2] || '\\';
-          subcomponentSeparator = encodingChars[3] || '&';
-        }
-      }
-
-      // Create line container
-      const lineDiv = document.createElement('div');
-      lineDiv.className = 'hl7-line';
-      lineDiv.dataset.segment = segmentId;
-
-      // Parse and render the segment
-      const parsedSegment = parseSegment(
-        trimmedLine,
-        segmentId,
-        fieldSeparator,
-        componentSeparator,
-        repetitionSeparator,
-        subcomponentSeparator
-      );
-
-      // Create segment name span
-      const segmentSpan = document.createElement('span');
-      segmentSpan.className = 'hl7-segment-id';
-      segmentSpan.textContent = segmentId;
-      segmentSpan.dataset.segment = segmentId;
-      segmentSpan.dataset.tooltipText = getSegmentTooltip(segmentId);
-      lineDiv.appendChild(segmentSpan);
-
-      // Handle MSH specially - field separator is MSH.1
-      if (segmentId === 'MSH') {
-        // Add the field separator as MSH.1
-        const sepSpan = document.createElement('span');
-        sepSpan.className = 'hl7-field';
-        sepSpan.textContent = fieldSeparator;
-        sepSpan.dataset.segment = 'MSH';
-        sepSpan.dataset.field = '1';
-        sepSpan.dataset.tooltipText = 'MSH.1 - Field Separator';
-        lineDiv.appendChild(sepSpan);
-
-        // Add encoding characters as MSH.2
-        if (parsedSegment.fields.length > 0) {
-          const encSpan = createFieldSpan(
-            parsedSegment.fields[0],
-            'MSH',
-            2,
-            componentSeparator,
-            subcomponentSeparator
-          );
-          lineDiv.appendChild(encSpan);
-        }
-
-        // Add remaining fields starting from index 1 (which is MSH.3)
-        for (let i = 1; i < parsedSegment.fields.length; i++) {
+        // Handle MSH specially - field separator is MSH.1
+        if (segmentId === 'MSH') {
+          // Add the field separator as MSH.1
           const sepSpan = document.createElement('span');
-          sepSpan.className = 'hl7-separator';
+          sepSpan.className = 'hl7-field';
           sepSpan.textContent = fieldSeparator;
+          sepSpan.dataset.segment = 'MSH';
+          sepSpan.dataset.field = '1';
+          sepSpan.dataset.tooltipText = 'MSH.1 - Field Separator';
           lineDiv.appendChild(sepSpan);
 
-          const fieldSpan = createFieldSpan(
-            parsedSegment.fields[i],
-            segmentId,
-            i + 2, // MSH fields are offset by 2
-            componentSeparator,
-            subcomponentSeparator
-          );
-          lineDiv.appendChild(fieldSpan);
-        }
-      } else {
-        // Regular segment
-        for (let i = 0; i < parsedSegment.fields.length; i++) {
-          const sepSpan = document.createElement('span');
-          sepSpan.className = 'hl7-separator';
-          sepSpan.textContent = fieldSeparator;
-          lineDiv.appendChild(sepSpan);
+          // Add encoding characters as MSH.2
+          if (parsedSegment.fields.length > 0) {
+            const encSpan = createFieldSpan(
+              parsedSegment.fields[0],
+              'MSH',
+              2,
+              componentSeparator,
+              subcomponentSeparator
+            );
+            lineDiv.appendChild(encSpan);
+          }
 
-          const fieldSpan = createFieldSpan(
-            parsedSegment.fields[i],
-            segmentId,
-            i + 1,
-            componentSeparator,
-            subcomponentSeparator
-          );
-          lineDiv.appendChild(fieldSpan);
+          // Add remaining fields starting from index 1 (which is MSH.3)
+          for (let i = 1; i < parsedSegment.fields.length; i++) {
+            const sepSpan = document.createElement('span');
+            sepSpan.className = 'hl7-separator';
+            sepSpan.textContent = fieldSeparator;
+            lineDiv.appendChild(sepSpan);
+
+            const fieldSpan = createFieldSpan(
+              parsedSegment.fields[i],
+              segmentId,
+              i + 2, // MSH fields are offset by 2
+              componentSeparator,
+              subcomponentSeparator
+            );
+            lineDiv.appendChild(fieldSpan);
+          }
+        } else {
+          // Regular segment
+          for (let i = 0; i < parsedSegment.fields.length; i++) {
+            const sepSpan = document.createElement('span');
+            sepSpan.className = 'hl7-separator';
+            sepSpan.textContent = fieldSeparator;
+            lineDiv.appendChild(sepSpan);
+
+            const fieldSpan = createFieldSpan(
+              parsedSegment.fields[i],
+              segmentId,
+              i + 1,
+              componentSeparator,
+              subcomponentSeparator
+            );
+            lineDiv.appendChild(fieldSpan);
+          }
         }
+
+        container.appendChild(lineDiv);
       }
-
-      container.appendChild(lineDiv);
     }
 
-    // Replace page content
-    document.body.innerHTML = '';
-    document.body.appendChild(container);
-    document.body.appendChild(tooltip);
+    return endIndex;
+  }
 
-    // Add event listeners for tooltips
-    setupTooltipListeners(tooltip);
+  /**
+   * Create the "Load More" button
+   */
+  function createLoadMoreButton(total, loaded) {
+    const btn = document.createElement('button');
+    btn.className = 'hl7-load-more';
+    btn.innerHTML = `Load More <span class="hl7-load-more-count">(showing ${loaded} of ${total} messages)</span>`;
+    return btn;
+  }
+
+  /**
+   * Update the "Load More" button text
+   */
+  function updateLoadMoreButton(btn, total, loaded) {
+    btn.innerHTML = `Load More <span class="hl7-load-more-count">(showing ${loaded} of ${total} messages)</span>`;
   }
 
   /**
    * Render the collapsed/tree view with expandable segments
    */
-  function renderCollapsedView(content) {
+  function renderCollapsedView(content, hideEmptyFields, messagesPerBatch) {
     // Create the main container
     const container = document.createElement('div');
     container.className = 'hl7-container hl7-collapsed-view';
@@ -220,18 +318,55 @@
     const lines = content.split(/\r?\n/);
     const messages = parseIntoMessages(lines);
 
-    // Render each message as an expandable tree
-    messages.forEach((message, msgIndex) => {
-      const messageDiv = createMessageNode(message, msgIndex);
-      container.appendChild(messageDiv);
-    });
+    // State for pagination
+    let renderedCount = 0;
+    const totalMessages = messages.length;
+
+    // Render first batch
+    renderedCount = renderCollapsedBatch(container, messages, 0, messagesPerBatch, hideEmptyFields);
 
     // Replace page content
     document.body.innerHTML = '';
     document.body.appendChild(container);
 
+    // Add "Load More" button if there are more messages
+    if (renderedCount < totalMessages) {
+      const loadMoreBtn = createLoadMoreButton(totalMessages, renderedCount);
+      container.appendChild(loadMoreBtn);
+
+      loadMoreBtn.addEventListener('click', function() {
+        // Remove the button temporarily
+        loadMoreBtn.remove();
+
+        // Render next batch
+        const newCount = renderCollapsedBatch(container, messages, renderedCount, messagesPerBatch, hideEmptyFields);
+        renderedCount = newCount;
+
+        // Add button back if still more to load
+        if (renderedCount < totalMessages) {
+          updateLoadMoreButton(loadMoreBtn, totalMessages, renderedCount);
+          container.appendChild(loadMoreBtn);
+        }
+      });
+    }
+
     // Setup expand/collapse listeners
     setupCollapseListeners();
+  }
+
+  /**
+   * Render a batch of messages in collapsed/tree view
+   */
+  function renderCollapsedBatch(container, messages, startIndex, batchSize, hideEmptyFields) {
+    const endIndex = Math.min(startIndex + batchSize, messages.length);
+
+    for (let m = startIndex; m < endIndex; m++) {
+      const message = messages[m];
+      const messageDiv = createMessageNode(message, m, hideEmptyFields);
+      container.appendChild(messageDiv);
+    }
+
+    return endIndex;
   }
 
   /**
@@ -298,7 +433,7 @@
   /**
    * Create a message node for the collapsed view
    */
-  function createMessageNode(message, msgIndex) {
+  function createMessageNode(message, msgIndex, hideEmptyFields) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'hl7-tree-message';
 
@@ -330,7 +465,7 @@
     messageContent.style.display = 'none';
 
     message.segments.forEach(segment => {
-      const segmentNode = createSegmentNode(segment);
+      const segmentNode = createSegmentNode(segment, hideEmptyFields);
       messageContent.appendChild(segmentNode);
     });
 
@@ -342,7 +477,7 @@
   /**
    * Create a segment node for the collapsed view
    */
-  function createSegmentNode(segment) {
+  function createSegmentNode(segment, hideEmptyFields) {
     const segmentDiv = document.createElement('div');
     segmentDiv.className = 'hl7-tree-segment';
 
@@ -371,26 +506,32 @@
 
     // Handle MSH specially
     if (segment.segmentId === 'MSH') {
-      // MSH.1 - Field Separator
-      const field1Node = createFieldNode(segment.segmentId, 1, segment.fieldSeparator, null, segment.componentSeparator, segment.subcomponentSeparator);
-      segmentContent.appendChild(field1Node);
+      // MSH.1 - Field Separator (always show)
+      const field1Node = createFieldNode(segment.segmentId, 1, segment.fieldSeparator, null, segment.componentSeparator, segment.subcomponentSeparator, hideEmptyFields);
+      if (field1Node) segmentContent.appendChild(field1Node);
 
-      // MSH.2 - Encoding Characters
-      const field2Node = createFieldNode(segment.segmentId, 2, segment.fields[0], null, segment.componentSeparator, segment.subcomponentSeparator);
-      segmentContent.appendChild(field2Node);
+      // MSH.2 - Encoding Characters (always show)
+      const field2Node = createFieldNode(segment.segmentId, 2, segment.fields[0], null, segment.componentSeparator, segment.subcomponentSeparator, hideEmptyFields);
+      if (field2Node) segmentContent.appendChild(field2Node);
 
       // Remaining fields
       for (let i = 1; i < segment.fields.length; i++) {
         const fieldNum = i + 2;
-        const fieldNode = createFieldNode(segment.segmentId, fieldNum, segment.fields[i], segmentInfo, segment.componentSeparator, segment.subcomponentSeparator);
-        segmentContent.appendChild(fieldNode);
+        const fieldValue = segment.fields[i];
+        // Skip empty fields if hideEmptyFields is enabled
+        if (hideEmptyFields && (!fieldValue || !fieldValue.trim())) continue;
+        const fieldNode = createFieldNode(segment.segmentId, fieldNum, fieldValue, segmentInfo, segment.componentSeparator, segment.subcomponentSeparator, hideEmptyFields);
+        if (fieldNode) segmentContent.appendChild(fieldNode);
       }
     } else {
       // Regular segment
       for (let i = 0; i < segment.fields.length; i++) {
         const fieldNum = i + 1;
-        const fieldNode = createFieldNode(segment.segmentId, fieldNum, segment.fields[i], segmentInfo, segment.componentSeparator, segment.subcomponentSeparator);
-        segmentContent.appendChild(fieldNode);
+        const fieldValue = segment.fields[i];
+        // Skip empty fields if hideEmptyFields is enabled
+        if (hideEmptyFields && (!fieldValue || !fieldValue.trim())) continue;
+        const fieldNode = createFieldNode(segment.segmentId, fieldNum, fieldValue, segmentInfo, segment.componentSeparator, segment.subcomponentSeparator, hideEmptyFields);
+        if (fieldNode) segmentContent.appendChild(fieldNode);
       }
     }
 
@@ -402,7 +543,7 @@
   /**
    * Create a field node for the collapsed view
    */
-  function createFieldNode(segmentId, fieldNum, fieldValue, segmentInfo, compSep, subcompSep) {
+  function createFieldNode(segmentId, fieldNum, fieldValue, segmentInfo, compSep, subcompSep, hideEmptyFields) {
     const fieldDiv = document.createElement('div');
     fieldDiv.className = 'hl7-tree-field';
 
@@ -437,7 +578,9 @@
       const components = fieldValue.split(compSep);
       components.forEach((comp, compIndex) => {
         const compNum = compIndex + 1;
-        const compNode = createComponentNode(segmentId, fieldNum, compNum, comp, fieldDef, subcompSep);
+        // Skip empty components if hideEmptyFields is enabled
+        if (hideEmptyFields && (!comp || !comp.trim())) return;
+        const compNode = createComponentNode(segmentId, fieldNum, compNum, comp, fieldDef, subcompSep, hideEmptyFields);
         fieldContent.appendChild(compNode);
       });
 
@@ -458,7 +601,7 @@
   /**
    * Create a component node for the collapsed view
    */
-  function createComponentNode(segmentId, fieldNum, compNum, compValue, fieldDef, subcompSep) {
+  function createComponentNode(segmentId, fieldNum, compNum, compValue, fieldDef, subcompSep, hideEmptyFields) {
     const compDiv = document.createElement('div');
     compDiv.className = 'hl7-tree-component';
 
@@ -491,6 +634,8 @@
       const subcomponents = compValue.split(subcompSep);
       subcomponents.forEach((subcomp, subcompIndex) => {
         const subcompNum = subcompIndex + 1;
+        // Skip empty subcomponents if hideEmptyFields is enabled
+        if (hideEmptyFields && (!subcomp || !subcomp.trim())) return;
         const subcompDiv = document.createElement('div');
         subcompDiv.className = 'hl7-tree-subcomponent';
         const subcompEmpty = !subcomp || !subcomp.trim();

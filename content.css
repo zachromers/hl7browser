@@ -3,7 +3,7 @@
 /* Main container */
 .hl7-container {
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 16px;
   line-height: 1.6;
   padding: 20px;
   background-color: #1e1e1e;
@@ -38,7 +38,6 @@
 .hl7-segment-id {
   color: #569cd6;
   font-weight: bold;
-  cursor: help;
 }
 
 .hl7-segment-id:hover,
@@ -63,10 +62,6 @@
 }
 
 /* Fields */
-.hl7-field {
-  cursor: help;
-}
-
 .hl7-field:hover,
 .hl7-field.hl7-hover {
   background-color: #3c3c3c;
@@ -76,7 +71,6 @@
 /* Components within a field */
 .hl7-component {
   color: #ce9178;
-  cursor: help;
 }
 
 .hl7-component:hover,
@@ -88,7 +82,6 @@
 /* Subcomponents */
 .hl7-subcomponent {
   color: #b5cea8;
-  cursor: help;
 }
 
 .hl7-subcomponent:hover,
@@ -480,13 +473,13 @@
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   color: #9cdcfe;
   min-width: 70px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .hl7-tree-field-name {
   color: #808080;
   min-width: 200px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .hl7-tree-field-value {
@@ -711,5 +704,74 @@
 
   .hl7-tree-content {
     background-color: #fafafa;
+  }
+}
+
+/* ========================================
+   LOAD MORE BUTTON & MESSAGE SEPARATOR
+   ======================================== */
+
+/* Message separator between messages in standard view */
+.hl7-message-separator {
+  height: 2px;
+  background: linear-gradient(to right, transparent, #3c3c3c, transparent);
+  margin: 16px 0;
+}
+
+/* Load More button */
+.hl7-load-more {
+  display: block;
+  width: 100%;
+  max-width: 400px;
+  margin: 24px auto;
+  padding: 12px 24px;
+  font-family: 'Segoe UI', 'Arial', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: #ffffff;
+  background-color: #0e639c;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.hl7-load-more:hover {
+  background-color: #1177bb;
+}
+
+.hl7-load-more:active {
+  background-color: #0d5a8c;
+  transform: scale(0.98);
+}
+
+.hl7-load-more-count {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 4px;
+}
+
+/* Light theme for load more button and separator */
+@media (prefers-color-scheme: light) {
+  .hl7-message-separator {
+    background: linear-gradient(to right, transparent, #e0e0e0, transparent);
+  }
+
+  .hl7-load-more {
+    background-color: #0066cc;
+  }
+
+  .hl7-load-more:hover {
+    background-color: #0077dd;
+  }
+
+  .hl7-load-more:active {
+    background-color: #0055aa;
+  }
+
+  .hl7-load-more-count {
+    color: rgba(255, 255, 255, 0.8);
   }
 }

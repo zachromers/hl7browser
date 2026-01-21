@@ -15,7 +15,7 @@
         <div class="option-content">
           <span class="option-icon">&#9776;</span>
           <div class="option-text">
-            <span class="option-title">Standard View</span>
+            <span class="option-title">Textual View</span>
             <span class="option-desc">Inline segments with hover tooltips</span>
           </div>
         </div>
@@ -26,11 +26,28 @@
         <div class="option-content">
           <span class="option-icon">&#9660;</span>
           <div class="option-text">
-            <span class="option-title">Collapsed View</span>
+            <span class="option-title">Tree View</span>
             <span class="option-desc">Expandable tree with field details</span>
           </div>
         </div>
       </label>
+    </div>
+
+    <div class="toggle-section">
+      <label class="toggle-option">
+        <input type="checkbox" id="hideEmptyFields">
+        <span class="toggle-switch"></span>
+        <span class="toggle-label">Hide empty fields in tree view</span>
+      </label>
+    </div>
+
+    <div class="select-section">
+      <label class="select-label" for="messagesPerBatch">Messages to load at a time:</label>
+      <select id="messagesPerBatch" class="select-input">
+        <option value="20">20 messages</option>
+        <option value="50">50 messages</option>
+        <option value="100">100 messages</option>
+      </select>
     </div>
 
     <div class="status" id="status"></div>

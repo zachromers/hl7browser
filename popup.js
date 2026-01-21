@@ -3,25 +3,45 @@
 document.addEventListener('DOMContentLoaded', function() {
   const standardRadio = document.querySelector('input[value="standard"]');
   const collapsedRadio = document.querySelector('input[value="collapsed"]');
+  const hideEmptyCheckbox = document.getElementById('hideEmptyFields');
+  const messagesPerBatchSelect = document.getElementById('messagesPerBatch');
   const applyBtn = document.getElementById('applyBtn');
   const status = document.getElementById('status');
 
-  // Load current setting
-  chrome.storage.sync.get(['viewMode'], function(result) {
+  // Load current settings
+  chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
     const currentMode = result.viewMode || 'standard';
     if (currentMode === 'collapsed') {
       collapsedRadio.checked = true;
     } else {
       standardRadio.checked = true;
     }
+    hideEmptyCheckbox.checked = result.hideEmptyFields || false;
+    messagesPerBatchSelect.value = result.messagesPerBatch || '20';
+
+    // Update visual selected state after loading from storage
+    updateSelectedState();
   });
+
+  // Update visual selected state based on checked radio
+  function updateSelectedState() {
+    document.querySelectorAll('.view-option').forEach(function(opt) {
+      opt.classList.remove('selected');
+    });
+    const checkedRadio = document.querySelector('input[name="viewMode"]:checked');
+    if (checkedRadio) {
+      checkedRadio.closest('.view-option').classList.add('selected');
+    }
+  }
 
   // Apply button click handler
   applyBtn.addEventListener('click', function() {
     const selectedMode = document.querySelector('input[name="viewMode"]:checked').value;
+    const hideEmpty = hideEmptyCheckbox.checked;
+    const messagesPerBatch = messagesPerBatchSelect.value;
 
-    // Save the setting
-    chrome.storage.sync.set({ viewMode: selectedMode }, function() {
+    // Save the settings
+    chrome.storage.sync.set({ viewMode: selectedMode, hideEmptyFields: hideEmpty, messagesPerBatch: messagesPerBatch }, function() {
       status.textContent = 'Settings saved! Reloading...';
       status.className = 'status success';
 
@@ -54,16 +74,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Visual feedback when selecting an option
   document.querySelectorAll('input[name="viewMode"]').forEach(function(radio) {
-    radio.addEventListener('change', function() {
-      document.querySelectorAll('.view-option').forEach(function(opt) {
-        opt.classList.remove('selected');
-      });
-      this.closest('.view-option').classList.add('selected');
-    });
-
-    // Set initial selected state
-    if (radio.checked) {
-      radio.closest('.view-option').classList.add('selected');
-    }
+    radio.addEventListener('change', updateSelectedState);
   });
 });
