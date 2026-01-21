@@ -10,10 +10,7 @@
   "content_scripts": [
     {
       "matches": [
-        "file://*/*.hl7",
-        "file://*/*.HL7",
-        "file://*/*.txt",
-        "file://*/*.TXT"
+        "file:///*"
       ],
       "js": ["hl7-fields.js", "content.js"],
       "css": ["content.css"],
