@@ -1040,6 +1040,9 @@
         }
       });
     }
+
+    // Setup JSON context menu for Python path copying
+    setupJSONContextMenu();
   }
 
   /**
@@ -1068,7 +1071,8 @@
 
       const pre = document.createElement('pre');
       pre.className = 'json-content';
-      pre.innerHTML = syntaxHighlightJSON(items[i]);
+      // Use path-aware rendering for standard view
+      pre.appendChild(renderJSONWithPaths(items[i], ''));
       itemContainer.appendChild(pre);
 
       container.appendChild(itemContainer);
@@ -1078,29 +1082,88 @@
   }
 
   /**
-   * Syntax highlight JSON for standard view
+   * Render JSON with path tracking for standard view
+   * Creates a DOM tree with data-json-path attributes
    */
-  function syntaxHighlightJSON(obj) {
-    const json = JSON.stringify(obj, null, 2);
+  function renderJSONWithPaths(value, currentPath, indent = 0) {
+    const fragment = document.createDocumentFragment();
+    const indentStr = '  '.repeat(indent);
+    const valueType = getJSONValueType(value);
 
-    return json.replace(
-      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-      function(match) {
-        let cls = 'json-number';
-        if (/^"/.test(match)) {
-          if (/:$/.test(match)) {
-            cls = 'json-key';
-          } else {
-            cls = 'json-string';
-          }
-        } else if (/true|false/.test(match)) {
-          cls = 'json-boolean';
-        } else if (/null/.test(match)) {
-          cls = 'json-null';
+    if (valueType === 'object') {
+      const keys = Object.keys(value);
+      fragment.appendChild(document.createTextNode('{\n'));
+
+      keys.forEach((key, idx) => {
+        const childPath = currentPath + `['${key}']`;
+
+        // Indentation
+        fragment.appendChild(document.createTextNode(indentStr + '  '));
+
+        // Key
+        const keySpan = document.createElement('span');
+        keySpan.className = 'json-key json-path-item';
+        keySpan.dataset.jsonPath = childPath;
+        keySpan.textContent = `"${key}"`;
+        fragment.appendChild(keySpan);
+
+        fragment.appendChild(document.createTextNode(': '));
+
+        // Value
+        fragment.appendChild(renderJSONWithPaths(value[key], childPath, indent + 1));
+
+        // Comma and newline
+        if (idx < keys.length - 1) {
+          fragment.appendChild(document.createTextNode(','));
         }
-        return '<span class="' + cls + '">' + escapeHtml(match) + '</span>';
+        fragment.appendChild(document.createTextNode('\n'));
+      });
+
+      fragment.appendChild(document.createTextNode(indentStr + '}'));
+    } else if (valueType === 'array') {
+      fragment.appendChild(document.createTextNode('[\n'));
+
+      value.forEach((item, idx) => {
+        const childPath = currentPath + `[${idx}]`;
+
+        // Indentation
+        fragment.appendChild(document.createTextNode(indentStr + '  '));
+
+        // Value (with path)
+        const valueWrapper = document.createElement('span');
+        valueWrapper.className = 'json-array-item json-path-item';
+        valueWrapper.dataset.jsonPath = childPath;
+        valueWrapper.appendChild(renderJSONWithPaths(item, childPath, indent + 1));
+        fragment.appendChild(valueWrapper);
+
+        // Comma and newline
+        if (idx < value.length - 1) {
+          fragment.appendChild(document.createTextNode(','));
+        }
+        fragment.appendChild(document.createTextNode('\n'));
+      });
+
+      fragment.appendChild(document.createTextNode(indentStr + ']'));
+    } else {
+      // Primitive value
+      const valueSpan = document.createElement('span');
+      valueSpan.className = `json-${valueType} json-path-item`;
+      if (currentPath) {
+        valueSpan.dataset.jsonPath = currentPath;
       }
-    );
+
+      if (valueType === 'string') {
+        valueSpan.textContent = `"${value}"`;
+      } else if (valueType === 'null') {
+        valueSpan.textContent = 'null';
+      } else {
+        valueSpan.textContent = String(value);
+      }
+
+      fragment.appendChild(valueSpan);
+    }
+
+    return fragment;
   }
 
   /**
@@ -1142,6 +1205,9 @@
 
     // Setup expand/collapse listeners (reuse HL7's)
     setupCollapseListeners();
+
+    // Setup JSON context menu for Python path copying
+    setupJSONContextMenu();
   }
 
   /**
@@ -1160,13 +1226,37 @@
 
   /**
    * Create a tree node for JSON collapsed view
+   * @param {*} value - The JSON value
+   * @param {string} key - The key name
+   * @param {number} index - The index in parent array/object
+   * @param {boolean} isArrayItem - Whether this is a direct array item
+   * @param {string} parentPath - The Python path to the parent (for building full path)
    */
-  function createJSONTreeNode(value, key, index, isArrayItem) {
+  function createJSONTreeNode(value, key, index, isArrayItem, parentPath = '') {
     const nodeDiv = document.createElement('div');
     nodeDiv.className = 'json-tree-node';
 
     const valueType = getJSONValueType(value);
     const isExpandable = valueType === 'object' || valueType === 'array';
+
+    // Build the Python path for this node
+    let currentPath;
+    if (parentPath === '' && key === 'root') {
+      // Root container - no path for the root itself
+      currentPath = '';
+    } else if (parentPath === '' && key.startsWith('[')) {
+      // Array index at root level (for JSON arrays)
+      currentPath = key;
+    } else if (parentPath === '') {
+      // First level object keys (direct children of root)
+      currentPath = `['${key}']`;
+    } else if (key.startsWith('[')) {
+      // Array index in nested structure
+      currentPath = parentPath + key;
+    } else {
+      // Object key in nested structure
+      currentPath = parentPath + `['${key}']`;
+    }
 
     if (isExpandable) {
       // Expandable node (object or array)
@@ -1176,6 +1266,11 @@
       const childCount = valueType === 'array' ? value.length : Object.keys(value).length;
       const typeLabel = valueType === 'array' ? `Array[${childCount}]` : `Object{${childCount}}`;
       const displayKey = isArrayItem ? `Item ${index + 1}` : key;
+
+      // Store the path for context menu (only if not root)
+      if (currentPath) {
+        header.dataset.jsonPath = currentPath;
+      }
 
       header.innerHTML = `
         <span class="hl7-tree-toggle">&#9654;</span>
@@ -1189,14 +1284,17 @@
       content.className = 'hl7-tree-content';
       content.style.display = 'none';
 
+      // Use currentPath if set, otherwise empty string for root object's children
+      const pathForChildren = currentPath || '';
+
       if (valueType === 'array') {
         value.forEach((item, idx) => {
-          const childNode = createJSONTreeNode(item, `[${idx}]`, idx, false);
+          const childNode = createJSONTreeNode(item, `[${idx}]`, idx, false, pathForChildren);
           content.appendChild(childNode);
         });
       } else {
         Object.keys(value).forEach((k, idx) => {
-          const childNode = createJSONTreeNode(value[k], k, idx, false);
+          const childNode = createJSONTreeNode(value[k], k, idx, false, pathForChildren);
           content.appendChild(childNode);
         });
       }
@@ -1206,6 +1304,11 @@
       // Leaf node (primitive value)
       nodeDiv.className += ' json-tree-leaf';
       const displayValue = formatJSONValue(value, valueType);
+
+      // Store the path for context menu
+      if (currentPath) {
+        nodeDiv.dataset.jsonPath = currentPath;
+      }
 
       nodeDiv.innerHTML = `
         <span class="json-tree-key">${escapeHtml(key)}</span>
@@ -1233,6 +1336,148 @@
     if (type === 'string') return `"${value}"`;
     if (type === 'boolean') return value ? 'true' : 'false';
     return String(value);
+  }
+
+  // ========================================
+  // JSON CONTEXT MENU FOR PYTHON PATH COPYING
+  // ========================================
+
+  /**
+   * Setup custom context menu for JSON elements
+   */
+  function setupJSONContextMenu() {
+    // Create context menu element
+    const contextMenu = document.createElement('div');
+    contextMenu.className = 'json-context-menu';
+    contextMenu.style.display = 'none';
+    contextMenu.innerHTML = `
+      <div class="json-context-menu-item" data-action="copy-python-path">
+        <span class="json-context-menu-icon">&#128203;</span>
+        Copy Python path
+      </div>
+    `;
+    document.body.appendChild(contextMenu);
+
+    let currentPath = null;
+
+    // Handle right-click on JSON elements
+    document.body.addEventListener('contextmenu', function(e) {
+      // Find the closest element with a JSON path
+      const pathElement = e.target.closest('[data-json-path]');
+
+      if (pathElement) {
+        e.preventDefault();
+        currentPath = pathElement.dataset.jsonPath;
+
+        // Position and show the context menu
+        contextMenu.style.left = e.pageX + 'px';
+        contextMenu.style.top = e.pageY + 'px';
+        contextMenu.style.display = 'block';
+
+        // Adjust position if menu would go off screen
+        const menuRect = contextMenu.getBoundingClientRect();
+        if (menuRect.right > window.innerWidth) {
+          contextMenu.style.left = (e.pageX - menuRect.width) + 'px';
+        }
+        if (menuRect.bottom > window.innerHeight) {
+          contextMenu.style.top = (e.pageY - menuRect.height) + 'px';
+        }
+      }
+    });
+
+    // Handle context menu item click
+    contextMenu.addEventListener('click', function(e) {
+      const menuItem = e.target.closest('.json-context-menu-item');
+      if (menuItem && menuItem.dataset.action === 'copy-python-path') {
+        if (currentPath) {
+          copyToClipboard(currentPath);
+          showCopyNotification('Python path copied to clipboard!');
+        }
+      }
+      contextMenu.style.display = 'none';
+    });
+
+    // Hide context menu when clicking elsewhere
+    document.addEventListener('click', function(e) {
+      if (!contextMenu.contains(e.target)) {
+        contextMenu.style.display = 'none';
+      }
+    });
+
+    // Hide context menu on scroll
+    document.addEventListener('scroll', function() {
+      contextMenu.style.display = 'none';
+    });
+
+    // Hide context menu on Escape key
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        contextMenu.style.display = 'none';
+      }
+    });
+  }
+
+  /**
+   * Copy text to clipboard
+   */
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function(err) {
+        // Fallback for older browsers
+        fallbackCopyToClipboard(text);
+      });
+    } else {
+      fallbackCopyToClipboard(text);
+    }
+  }
+
+  /**
+   * Fallback copy method for browsers without clipboard API
+   */
+  function fallbackCopyToClipboard(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+    } catch (err) {
+      console.error('Failed to copy text:', err);
+    }
+    document.body.removeChild(textArea);
+  }
+
+  /**
+   * Show a brief notification that text was copied
+   */
+  function showCopyNotification(message) {
+    // Remove any existing notification
+    const existing = document.querySelector('.json-copy-notification');
+    if (existing) {
+      existing.remove();
+    }
+
+    const notification = document.createElement('div');
+    notification.className = 'json-copy-notification';
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    // Fade in
+    setTimeout(function() {
+      notification.classList.add('visible');
+    }, 10);
+
+    // Fade out and remove
+    setTimeout(function() {
+      notification.classList.remove('visible');
+      setTimeout(function() {
+        notification.remove();
+      }, 300);
+    }, 2000);
   }
 
 })();

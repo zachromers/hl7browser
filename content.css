@@ -986,3 +986,96 @@
     color: #0000ff;
   }
 }
+
+/* ========================================
+   JSON CONTEXT MENU
+   ======================================== */
+
+.json-context-menu {
+  position: absolute;
+  z-index: 10001;
+  min-width: 180px;
+  background-color: #252526;
+  border: 1px solid #454545;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  font-family: 'Segoe UI', 'Arial', sans-serif;
+  font-size: 13px;
+}
+
+.json-context-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  color: #cccccc;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.json-context-menu-item:hover {
+  background-color: #094771;
+  color: #ffffff;
+}
+
+.json-context-menu-icon {
+  margin-right: 10px;
+  font-size: 14px;
+}
+
+/* Highlight elements with paths on hover */
+.json-path-item:hover,
+[data-json-path]:hover {
+  background-color: rgba(100, 150, 200, 0.2);
+  border-radius: 2px;
+  cursor: context-menu;
+}
+
+/* Copy notification toast */
+.json-copy-notification {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #0e639c;
+  color: #ffffff;
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-family: 'Segoe UI', 'Arial', sans-serif;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 10002;
+}
+
+.json-copy-notification.visible {
+  opacity: 1;
+}
+
+/* Light theme for context menu */
+@media (prefers-color-scheme: light) {
+  .json-context-menu {
+    background-color: #ffffff;
+    border-color: #d0d0d0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .json-context-menu-item {
+    color: #333333;
+  }
+
+  .json-context-menu-item:hover {
+    background-color: #e8e8e8;
+    color: #000000;
+  }
+
+  .json-path-item:hover,
+  [data-json-path]:hover {
+    background-color: rgba(0, 100, 200, 0.1);
+  }
+
+  .json-copy-notification {
+    background-color: #0066cc;
+  }
+}
