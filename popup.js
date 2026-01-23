@@ -5,11 +5,13 @@ document.addEventListener('DOMContentLoaded', function() {
   const collapsedRadio = document.querySelector('input[value="collapsed"]');
   const hideEmptyCheckbox = document.getElementById('hideEmptyFields');
   const messagesPerBatchSelect = document.getElementById('messagesPerBatch');
+  const extensionPausedCheckbox = document.getElementById('extensionPaused');
+  const pauseSection = document.querySelector('.pause-section');
   const applyBtn = document.getElementById('applyBtn');
   const status = document.getElementById('status');
 
   // Load current settings
-  chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
+  chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch', 'extensionPaused'], function(result) {
     const currentMode = result.viewMode || 'collapsed';
     if (currentMode === 'standard') {
       standardRadio.checked = true;
@@ -18,9 +20,50 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     hideEmptyCheckbox.checked = result.hideEmptyFields || false;
     messagesPerBatchSelect.value = result.messagesPerBatch || '20';
+    extensionPausedCheckbox.checked = result.extensionPaused || false;
+    updatePauseVisualState();
 
     // Update visual selected state after loading from storage
     updateSelectedState();
+  });
+
+  // Update visual state for pause toggle
+  function updatePauseVisualState() {
+    if (extensionPausedCheckbox.checked) {
+      pauseSection.classList.add('paused');
+    } else {
+      pauseSection.classList.remove('paused');
+    }
+  }
+
+  // Handle pause toggle change - takes effect immediately
+  extensionPausedCheckbox.addEventListener('change', function() {
+    const isPaused = extensionPausedCheckbox.checked;
+    updatePauseVisualState();
+
+    // Save the setting
+    chrome.storage.sync.set({ extensionPaused: isPaused }, function() {
+      // Send message to content script
+      chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        if (tabs[0] && tabs[0].url && tabs[0].url.startsWith('file://')) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            action: isPaused ? 'pause' : 'resume'
+          }, function(response) {
+            if (chrome.runtime.lastError) {
+              // Content script might not be loaded, reload the page
+              chrome.tabs.reload(tabs[0].id);
+            } else {
+              status.textContent = isPaused ? 'Extension paused' : 'Extension resumed';
+              status.className = 'status success';
+              setTimeout(function() {
+                status.textContent = '';
+                status.className = 'status';
+              }, 2000);
+            }
+          });
+        }
+      });
+    });
   });
 
   // Update visual selected state based on checked radio

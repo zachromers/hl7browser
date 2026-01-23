@@ -10,6 +10,10 @@
   // Get the raw text content of the page
   const rawContent = document.body.innerText || document.body.textContent;
 
+  // Store original HTML for pause/resume functionality
+  const originalHTML = document.body.innerHTML;
+  let isExtensionActive = false;
+
   // Detect content type
   const contentType = detectContentType(rawContent);
 
@@ -17,9 +21,76 @@
     return; // Not supported content, don't modify the page
   }
 
-  // Load view mode setting and render
+  // Listen for pause/resume messages from popup
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+      if (message.action === 'pause') {
+        pauseExtension();
+        sendResponse({ success: true });
+      } else if (message.action === 'resume') {
+        resumeExtension();
+        sendResponse({ success: true });
+      }
+      return true; // Keep message channel open for async response
+    });
+  }
+
+  /**
+   * Pause the extension - restore original content
+   */
+  function pauseExtension() {
+    if (isExtensionActive) {
+      document.body.innerHTML = originalHTML;
+      isExtensionActive = false;
+    }
+  }
+
+  /**
+   * Resume the extension - re-render with extension behavior
+   */
+  function resumeExtension() {
+    if (!isExtensionActive) {
+      renderWithCurrentSettings();
+    }
+  }
+
+  /**
+   * Render content with current settings from storage
+   */
+  function renderWithCurrentSettings() {
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
+        const viewMode = result.viewMode || 'collapsed';
+        const hideEmptyFields = result.hideEmptyFields || false;
+        const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
+
+        if (contentType === 'json') {
+          renderJSONContent(rawContent, viewMode, messagesPerBatch);
+        } else {
+          renderHL7Content(rawContent, viewMode, hideEmptyFields, messagesPerBatch);
+        }
+        isExtensionActive = true;
+      });
+    } else {
+      // Fallback if storage not available
+      if (contentType === 'json') {
+        renderJSONContent(rawContent, 'collapsed', DEFAULT_MESSAGES_PER_BATCH);
+      } else {
+        renderHL7Content(rawContent, 'collapsed', false, DEFAULT_MESSAGES_PER_BATCH);
+      }
+      isExtensionActive = true;
+    }
+  }
+
+  // Load settings and check if paused
   if (typeof chrome !== 'undefined' && chrome.storage) {
-    chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch'], function(result) {
+    chrome.storage.sync.get(['viewMode', 'hideEmptyFields', 'messagesPerBatch', 'extensionPaused'], function(result) {
+      // If paused, don't render
+      if (result.extensionPaused) {
+        isExtensionActive = false;
+        return;
+      }
+
       const viewMode = result.viewMode || 'collapsed';
       const hideEmptyFields = result.hideEmptyFields || false;
       const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
@@ -29,6 +100,7 @@
       } else {
         renderHL7Content(rawContent, viewMode, hideEmptyFields, messagesPerBatch);
       }
+      isExtensionActive = true;
     });
   } else {
     // Fallback if storage not available
@@ -37,6 +109,7 @@
     } else {
       renderHL7Content(rawContent, 'collapsed', false, DEFAULT_MESSAGES_PER_BATCH);
     }
+    isExtensionActive = true;
   }
 
   /**
@@ -1104,6 +1177,7 @@
         const keySpan = document.createElement('span');
         keySpan.className = 'json-key json-path-item';
         keySpan.dataset.jsonPath = childPath;
+        keySpan.dataset.jsonValueType = getJSONValueType(value[key]);
         keySpan.textContent = `"${key}"`;
         fragment.appendChild(keySpan);
 
@@ -1133,6 +1207,7 @@
         const valueWrapper = document.createElement('span');
         valueWrapper.className = 'json-array-item json-path-item';
         valueWrapper.dataset.jsonPath = childPath;
+        valueWrapper.dataset.jsonValueType = getJSONValueType(item);
         valueWrapper.appendChild(renderJSONWithPaths(item, childPath, indent + 1));
         fragment.appendChild(valueWrapper);
 
@@ -1150,6 +1225,7 @@
       valueSpan.className = `json-${valueType} json-path-item`;
       if (currentPath) {
         valueSpan.dataset.jsonPath = currentPath;
+        valueSpan.dataset.jsonValueType = valueType;
       }
 
       if (valueType === 'string') {
@@ -1270,6 +1346,7 @@
       // Store the path for context menu (only if not root)
       if (currentPath) {
         header.dataset.jsonPath = currentPath;
+        header.dataset.jsonValueType = valueType;
       }
 
       header.innerHTML = `
@@ -1308,6 +1385,7 @@
       // Store the path for context menu
       if (currentPath) {
         nodeDiv.dataset.jsonPath = currentPath;
+        nodeDiv.dataset.jsonValueType = valueType;
       }
 
       nodeDiv.innerHTML = `
@@ -1339,8 +1417,117 @@
   }
 
   // ========================================
-  // JSON CONTEXT MENU FOR PYTHON PATH COPYING
+  // JSON CONTEXT MENU FOR PATH COPYING
   // ========================================
+
+  /**
+   * Convert a Python-style JSON path to Java-style method calls
+   * e.g., ['glossary']['GlossDiv']['title'] with valueType 'string'
+   * becomes getJSONObject("glossary").getJSONObject("GlossDiv").getString("title")
+   * @param {string} pythonPath - The Python path like ['key1']['key2'][0]
+   * @param {string} valueType - The type of the final value (string, number, boolean, object, array, null)
+   * @returns {string} Java-style method chain
+   */
+  function convertToJavaPath(pythonPath, valueType) {
+    // Parse the path into segments
+    // Matches ['key'] or [0] patterns
+    const segmentRegex = /\['([^']+)'\]|\[(\d+)\]/g;
+    const segments = [];
+    let match;
+
+    while ((match = segmentRegex.exec(pythonPath)) !== null) {
+      if (match[1] !== undefined) {
+        // Named key: ['key']
+        segments.push({ type: 'key', value: match[1] });
+      } else if (match[2] !== undefined) {
+        // Array index: [0]
+        segments.push({ type: 'index', value: parseInt(match[2], 10) });
+      }
+    }
+
+    if (segments.length === 0) {
+      return '';
+    }
+
+    // Build the Java path
+    const parts = [];
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const isLast = i === segments.length - 1;
+      const nextSegment = segments[i + 1];
+
+      if (segment.type === 'key') {
+        if (isLast) {
+          // Last segment - use appropriate getter based on valueType
+          parts.push(getJavaGetter(valueType, segment.value));
+        } else if (nextSegment && nextSegment.type === 'index') {
+          // Next is array index, so this key leads to an array
+          parts.push(`getJSONArray("${segment.value}")`);
+        } else {
+          // Next is another key, so this leads to an object
+          parts.push(`getJSONObject("${segment.value}")`);
+        }
+      } else if (segment.type === 'index') {
+        if (isLast) {
+          // Last segment is array index - use appropriate getter
+          parts.push(getJavaArrayGetter(valueType, segment.value));
+        } else if (nextSegment && nextSegment.type === 'index') {
+          // Next is also array index (nested array)
+          parts.push(`getJSONArray(${segment.value})`);
+        } else {
+          // Next is a key, so this index returns an object
+          parts.push(`getJSONObject(${segment.value})`);
+        }
+      }
+    }
+
+    return parts.join('.');
+  }
+
+  /**
+   * Get the appropriate Java getter method for a key based on value type
+   */
+  function getJavaGetter(valueType, key) {
+    switch (valueType) {
+      case 'string':
+        return `getString("${key}")`;
+      case 'number':
+        return `getDouble("${key}")`; // Using getDouble as it handles both int and float
+      case 'boolean':
+        return `getBoolean("${key}")`;
+      case 'object':
+        return `getJSONObject("${key}")`;
+      case 'array':
+        return `getJSONArray("${key}")`;
+      case 'null':
+        return `get("${key}")`; // null values use generic get
+      default:
+        return `get("${key}")`;
+    }
+  }
+
+  /**
+   * Get the appropriate Java getter method for an array index based on value type
+   */
+  function getJavaArrayGetter(valueType, index) {
+    switch (valueType) {
+      case 'string':
+        return `getString(${index})`;
+      case 'number':
+        return `getDouble(${index})`;
+      case 'boolean':
+        return `getBoolean(${index})`;
+      case 'object':
+        return `getJSONObject(${index})`;
+      case 'array':
+        return `getJSONArray(${index})`;
+      case 'null':
+        return `get(${index})`;
+      default:
+        return `get(${index})`;
+    }
+  }
 
   /**
    * Setup custom context menu for JSON elements
@@ -1355,10 +1542,15 @@
         <span class="json-context-menu-icon">&#128203;</span>
         Copy Python path
       </div>
+      <div class="json-context-menu-item" data-action="copy-java-path">
+        <span class="json-context-menu-icon">&#9749;</span>
+        Copy Java path
+      </div>
     `;
     document.body.appendChild(contextMenu);
 
     let currentPath = null;
+    let currentValueType = null;
 
     // Handle right-click on JSON elements
     document.body.addEventListener('contextmenu', function(e) {
@@ -1368,6 +1560,7 @@
       if (pathElement) {
         e.preventDefault();
         currentPath = pathElement.dataset.jsonPath;
+        currentValueType = pathElement.dataset.jsonValueType || 'object';
 
         // Position and show the context menu
         contextMenu.style.left = e.pageX + 'px';
@@ -1388,10 +1581,14 @@
     // Handle context menu item click
     contextMenu.addEventListener('click', function(e) {
       const menuItem = e.target.closest('.json-context-menu-item');
-      if (menuItem && menuItem.dataset.action === 'copy-python-path') {
-        if (currentPath) {
+      if (menuItem && currentPath) {
+        if (menuItem.dataset.action === 'copy-python-path') {
           copyToClipboard(currentPath);
           showCopyNotification('Python path copied to clipboard!');
+        } else if (menuItem.dataset.action === 'copy-java-path') {
+          const javaPath = convertToJavaPath(currentPath, currentValueType);
+          copyToClipboard(javaPath);
+          showCopyNotification('Java path copied to clipboard!');
         }
       }
       contextMenu.style.display = 'none';

@@ -30,6 +30,74 @@ h1 {
   margin-bottom: 16px;
 }
 
+/* Pause section */
+.pause-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background-color: #2d2d2d;
+  border: 2px solid #3c3c3c;
+  border-radius: 8px;
+}
+
+.pause-section.paused {
+  background-color: #4a3000;
+  border-color: #ff9800;
+}
+
+.pause-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.pause-toggle input[type="checkbox"] {
+  display: none;
+}
+
+.pause-switch {
+  width: 44px;
+  height: 24px;
+  background-color: #4ec9b0;
+  border-radius: 12px;
+  position: relative;
+  transition: background-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.pause-switch::after {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+}
+
+.pause-toggle input:checked + .pause-switch {
+  background-color: #ff9800;
+}
+
+.pause-toggle input:checked + .pause-switch::after {
+  transform: translateX(20px);
+}
+
+.pause-label {
+  margin-left: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #d4d4d4;
+}
+
+.pause-desc {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #808080;
+}
+
 .view-options {
   display: flex;
   flex-direction: column;
@@ -310,5 +378,31 @@ h1 {
 
   .select-input:focus {
     border-color: #0066cc;
+  }
+
+  .pause-section {
+    background-color: #f5f5f5;
+    border-color: #e0e0e0;
+  }
+
+  .pause-section.paused {
+    background-color: #fff3e0;
+    border-color: #ff9800;
+  }
+
+  .pause-switch {
+    background-color: #4ec9b0;
+  }
+
+  .pause-toggle input:checked + .pause-switch {
+    background-color: #ff9800;
+  }
+
+  .pause-label {
+    color: #333333;
+  }
+
+  .pause-desc {
+    color: #666666;
   }
 }
