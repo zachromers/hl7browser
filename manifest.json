@@ -12,7 +12,7 @@
       "matches": [
         "file:///*"
       ],
-      "js": ["hl7-fields.js", "content.js"],
+      "js": ["hl7-fields.js", "stats.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_end"
     }

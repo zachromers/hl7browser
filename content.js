@@ -1,6 +1,9 @@
 // HL7 Browser - Content Script
 // Parses HL7 messages and JSON data with interactive viewing
 
+// Expose render helper globally for stats.js to call
+var HL7BrowserRender = {};
+
 (function() {
   'use strict';
 
@@ -14,12 +17,20 @@
   const originalHTML = document.body.innerHTML;
   let isExtensionActive = false;
 
+  // Track current page mode ('viewer' or 'stats')
+  let currentPageMode = 'viewer';
+
   // Detect content type
   const contentType = detectContentType(rawContent);
 
   if (!contentType) {
     return; // Not supported content, don't modify the page
   }
+
+  // Expose the renderHL7IntoContainer function for stats.js
+  HL7BrowserRender.renderIntoContainer = function(container, content, viewMode) {
+    renderHL7IntoContainer(container, content, viewMode);
+  };
 
   // Listen for pause/resume messages from popup
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
@@ -64,6 +75,8 @@
         const hideEmptyFields = result.hideEmptyFields || false;
         const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
 
+        setupPageStructure();
+
         if (contentType === 'json') {
           renderJSONContent(rawContent, viewMode, messagesPerBatch);
         } else {
@@ -72,7 +85,7 @@
         isExtensionActive = true;
       });
     } else {
-      // Fallback if storage not available
+      setupPageStructure();
       if (contentType === 'json') {
         renderJSONContent(rawContent, 'collapsed', DEFAULT_MESSAGES_PER_BATCH);
       } else {
@@ -95,6 +108,8 @@
       const hideEmptyFields = result.hideEmptyFields || false;
       const messagesPerBatch = parseInt(result.messagesPerBatch) || DEFAULT_MESSAGES_PER_BATCH;
 
+      setupPageStructure();
+
       if (contentType === 'json') {
         renderJSONContent(rawContent, viewMode, messagesPerBatch);
       } else {
@@ -103,13 +118,362 @@
       isExtensionActive = true;
     });
   } else {
-    // Fallback if storage not available
+    setupPageStructure();
     if (contentType === 'json') {
       renderJSONContent(rawContent, 'collapsed', DEFAULT_MESSAGES_PER_BATCH);
     } else {
       renderHL7Content(rawContent, 'collapsed', false, DEFAULT_MESSAGES_PER_BATCH);
     }
     isExtensionActive = true;
+  }
+
+  // ========================================
+  // PAGE STRUCTURE
+  // ========================================
+
+  /**
+   * Setup page structure: toolbar + viewer panel + stats panel
+   */
+  function setupPageStructure() {
+    document.body.innerHTML = '';
+
+    // Only show toolbar for HL7 content (not JSON)
+    if (contentType === 'hl7') {
+      const toolbar = createToolbar();
+      document.body.appendChild(toolbar);
+    }
+
+    // Viewer panel
+    const viewerPanel = document.createElement('div');
+    viewerPanel.className = 'hl7b-viewer-panel';
+    viewerPanel.id = 'hl7bViewerPanel';
+    document.body.appendChild(viewerPanel);
+
+    // Stats panel (only for HL7)
+    if (contentType === 'hl7') {
+      const statsPanel = createStatsPanel();
+      document.body.appendChild(statsPanel);
+    }
+  }
+
+  /**
+   * Create the toolbar with Viewer/Statistics toggle
+   */
+  function createToolbar() {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'hl7b-toolbar';
+
+    toolbar.innerHTML = `
+      <span class="hl7b-toolbar-title">HL7 Browser</span>
+      <div class="hl7b-toolbar-toggle">
+        <label class="hl7b-toggle-option">
+          <input type="radio" name="hl7bPageMode" value="viewer" checked>
+          <span class="hl7b-toggle-chip">Viewer</span>
+        </label>
+        <label class="hl7b-toggle-option">
+          <input type="radio" name="hl7bPageMode" value="stats">
+          <span class="hl7b-toggle-chip">Statistics</span>
+        </label>
+      </div>
+    `;
+
+    // Wire up toggle
+    toolbar.querySelectorAll('input[name="hl7bPageMode"]').forEach(radio => {
+      radio.addEventListener('change', function() {
+        setPageMode(this.value);
+      });
+    });
+
+    return toolbar;
+  }
+
+  /**
+   * Create the statistics panel
+   */
+  function createStatsPanel() {
+    const panel = document.createElement('div');
+    panel.className = 'hl7b-stats-panel';
+    panel.id = 'hl7bStatsPanel';
+    panel.style.display = 'none';
+
+    panel.innerHTML = `
+      <div class="stats-input-section">
+        <div class="stats-input-header">
+          <h2>Statistics Analysis</h2>
+          <p>Filter messages and analyze field values across all HL7 messages.</p>
+        </div>
+        <div class="stats-input-form">
+          <div class="stats-filters-section" id="statsFiltersSection">
+            <div class="stats-filters-header">
+              <label>Filters <span class="stats-info-icon">&#9432;
+                <div class="stats-info-popup">
+                  <h4>Filter Syntax</h4>
+                  <table class="stats-info-table">
+                    <tr><td><code>PV1.2 = E</code></td><td>Equals</td></tr>
+                    <tr><td><code>PV1.2 != E</code></td><td>Not equals</td></tr>
+                    <tr><td><code>PID.5 contains SMITH</code></td><td>Contains</td></tr>
+                    <tr><td><code>PID.5 !contains SMITH</code></td><td>Not contains</td></tr>
+                    <tr><td><code>PID.5 exists</code></td><td>Field has value</td></tr>
+                    <tr><td><code>PID.5 !exists</code></td><td>Field is empty</td></tr>
+                  </table>
+                  <p class="stats-info-note">Filters are optional. Leave blank to analyze all messages.</p>
+                </div>
+              </span></label>
+            </div>
+            <div class="stats-filters-list" id="statsFiltersList">
+              <div class="stats-filter-row" data-filter-index="1">
+                <span class="stats-filter-label">F1</span>
+                <input type="text" class="stats-field-input stats-filter-input" placeholder='e.g. PV1.2 = E' data-filter="1">
+              </div>
+            </div>
+            <button type="button" class="stats-add-filter-btn" id="statsAddFilterBtn">+ Add Filter</button>
+          </div>
+
+          <div class="stats-input-group">
+            <label>Field to Analyze</label>
+            <input type="text" class="stats-field-input" id="statsFieldInput" placeholder="e.g. MSH.9.1, PV1.2">
+          </div>
+
+          <button type="button" class="stats-generate-btn" id="statsEvaluateBtn">Evaluate</button>
+        </div>
+
+        <div class="stats-filter-logic" id="statsFilterLogic" style="display: none;">
+          <label>Filter Logic</label>
+          <div class="stats-logic-options">
+            <label class="stats-logic-option">
+              <input type="radio" name="statsLogic" value="AND" checked>
+              AND (all must match)
+            </label>
+            <label class="stats-logic-option">
+              <input type="radio" name="statsLogic" value="OR">
+              OR (any must match)
+            </label>
+            <label class="stats-logic-option">
+              <input type="radio" name="statsLogic" value="custom">
+              Custom
+            </label>
+          </div>
+          <div class="stats-custom-logic" id="statsCustomLogic" style="display: none;">
+            <input type="text" class="stats-field-input" id="statsCustomLogicInput" placeholder="e.g. F1 AND (F2 OR F3)">
+            <p class="stats-custom-logic-hint">Use F1, F2, etc. with AND, OR, NOT, and parentheses.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-results" id="statsResults"></div>
+    `;
+
+    // Wire up event handlers after the panel is in the DOM
+    setTimeout(() => setupStatsEventHandlers(), 0);
+
+    return panel;
+  }
+
+  /**
+   * Setup event handlers for the stats panel
+   */
+  function setupStatsEventHandlers() {
+    // Add filter button
+    const addFilterBtn = document.getElementById('statsAddFilterBtn');
+    if (addFilterBtn) {
+      addFilterBtn.addEventListener('click', addFilterRow);
+    }
+
+    // Evaluate button
+    const evaluateBtn = document.getElementById('statsEvaluateBtn');
+    if (evaluateBtn) {
+      evaluateBtn.addEventListener('click', evaluateStatistics);
+    }
+
+    // Enter key on field input
+    const fieldInput = document.getElementById('statsFieldInput');
+    if (fieldInput) {
+      fieldInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          evaluateStatistics();
+        }
+      });
+    }
+
+    // Enter key on filter inputs (delegated)
+    const filtersSection = document.getElementById('statsFiltersSection');
+    if (filtersSection) {
+      filtersSection.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && e.target.classList.contains('stats-filter-input')) {
+          evaluateStatistics();
+        }
+      });
+    }
+
+    // Logic radio buttons
+    const logicRadios = document.querySelectorAll('input[name="statsLogic"]');
+    logicRadios.forEach(radio => {
+      radio.addEventListener('change', function() {
+        const customLogicDiv = document.getElementById('statsCustomLogic');
+        if (customLogicDiv) {
+          customLogicDiv.style.display = this.value === 'custom' ? 'block' : 'none';
+        }
+      });
+    });
+
+    // Enter key on custom logic input
+    const customLogicInput = document.getElementById('statsCustomLogicInput');
+    if (customLogicInput) {
+      customLogicInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          evaluateStatistics();
+        }
+      });
+    }
+  }
+
+  /**
+   * Add a new filter row
+   */
+  function addFilterRow() {
+    const filtersList = document.getElementById('statsFiltersList');
+    if (!filtersList) return;
+
+    const existingRows = filtersList.querySelectorAll('.stats-filter-row');
+    const newIndex = existingRows.length + 1;
+
+    const row = document.createElement('div');
+    row.className = 'stats-filter-row';
+    row.dataset.filterIndex = newIndex;
+    row.innerHTML = `
+      <span class="stats-filter-label">F${newIndex}</span>
+      <input type="text" class="stats-field-input stats-filter-input" placeholder='e.g. PID.5 contains SMITH' data-filter="${newIndex}">
+      <button type="button" class="stats-filter-remove-btn" title="Remove filter">&#10005;</button>
+    `;
+
+    // Wire up remove button
+    row.querySelector('.stats-filter-remove-btn').addEventListener('click', function() {
+      row.remove();
+      renumberFilters();
+      updateFilterLogicVisibility();
+    });
+
+    filtersList.appendChild(row);
+    updateFilterLogicVisibility();
+
+    // Focus the new input
+    row.querySelector('.stats-filter-input').focus();
+  }
+
+  /**
+   * Renumber filter rows after removal
+   */
+  function renumberFilters() {
+    const filtersList = document.getElementById('statsFiltersList');
+    if (!filtersList) return;
+
+    const rows = filtersList.querySelectorAll('.stats-filter-row');
+    rows.forEach((row, idx) => {
+      const newIndex = idx + 1;
+      row.dataset.filterIndex = newIndex;
+      row.querySelector('.stats-filter-label').textContent = `F${newIndex}`;
+      row.querySelector('.stats-filter-input').dataset.filter = newIndex;
+    });
+  }
+
+  /**
+   * Show/hide filter logic section based on number of filters
+   */
+  function updateFilterLogicVisibility() {
+    const filtersList = document.getElementById('statsFiltersList');
+    const logicSection = document.getElementById('statsFilterLogic');
+    if (!filtersList || !logicSection) return;
+
+    const filledFilters = filtersList.querySelectorAll('.stats-filter-input');
+    let filledCount = 0;
+    filledFilters.forEach(input => {
+      if (input.value.trim()) filledCount++;
+    });
+
+    const totalRows = filtersList.querySelectorAll('.stats-filter-row').length;
+    logicSection.style.display = totalRows > 1 ? 'block' : 'none';
+  }
+
+  /**
+   * Evaluate statistics based on current inputs
+   */
+  function evaluateStatistics() {
+    const fieldInput = document.getElementById('statsFieldInput');
+    const fieldRef = fieldInput ? fieldInput.value.trim() : '';
+
+    // Gather filters
+    const filterInputs = document.querySelectorAll('.stats-filter-input');
+    const filters = [];
+    filterInputs.forEach(input => {
+      const expr = input.value.trim();
+      if (expr) {
+        filters.push({
+          label: `F${input.dataset.filter}`,
+          expression: expr
+        });
+      }
+    });
+
+    // If no filters and no field, show hint
+    if (filters.length === 0 && !fieldRef) {
+      const resultsContainer = document.getElementById('statsResults');
+      if (resultsContainer) {
+        resultsContainer.innerHTML = '<div class="stats-error">Please enter a filter expression and/or a field to analyze.</div>';
+      }
+      return;
+    }
+
+    // Build filters config
+    let filtersConfig = null;
+    if (filters.length > 0) {
+      let logic = 'single';
+      let expression = '';
+
+      if (filters.length > 1) {
+        const logicRadio = document.querySelector('input[name="statsLogic"]:checked');
+        logic = logicRadio ? logicRadio.value : 'AND';
+
+        if (logic === 'custom') {
+          const customInput = document.getElementById('statsCustomLogicInput');
+          expression = customInput ? customInput.value.trim() : '';
+        }
+      }
+
+      filtersConfig = {
+        filters: filters,
+        logic: logic,
+        expression: expression
+      };
+    }
+
+    // Update filter logic visibility
+    updateFilterLogicVisibility();
+
+    // Run statistics
+    if (typeof HL7Stats !== 'undefined') {
+      HL7Stats.runStatistics(rawContent, fieldRef, 'statsResults', filtersConfig);
+
+      // Setup collapse listeners for any tree views rendered inside stats
+      setupCollapseListenersForElement(document.getElementById('statsResults'));
+    }
+  }
+
+  /**
+   * Set the page mode (viewer or stats)
+   */
+  function setPageMode(mode) {
+    currentPageMode = mode;
+
+    const viewerPanel = document.getElementById('hl7bViewerPanel');
+    const statsPanel = document.getElementById('hl7bStatsPanel');
+
+    if (mode === 'viewer') {
+      if (viewerPanel) viewerPanel.style.display = '';
+      if (statsPanel) statsPanel.style.display = 'none';
+    } else {
+      if (viewerPanel) viewerPanel.style.display = 'none';
+      if (statsPanel) statsPanel.style.display = 'block';
+    }
   }
 
   /**
@@ -187,6 +551,9 @@
    * Render the standard inline view with hover tooltips
    */
   function renderStandardView(content, messagesPerBatch) {
+    const viewerPanel = document.getElementById('hl7bViewerPanel');
+    if (!viewerPanel) return;
+
     // Create the main container
     const container = document.createElement('div');
     container.className = 'hl7-container hl7-standard-view';
@@ -207,10 +574,10 @@
     // Render first batch
     renderedCount = renderStandardBatch(container, messageGroups, 0, messagesPerBatch);
 
-    // Replace page content
-    document.body.innerHTML = '';
-    document.body.appendChild(container);
-    document.body.appendChild(tooltip);
+    // Place content in viewer panel
+    viewerPanel.innerHTML = '';
+    viewerPanel.appendChild(container);
+    viewerPanel.appendChild(tooltip);
 
     // Add "Load More" button if there are more messages
     if (renderedCount < totalMessages) {
@@ -433,6 +800,9 @@
    * Render the collapsed/tree view with expandable segments
    */
   function renderCollapsedView(content, hideEmptyFields, messagesPerBatch) {
+    const viewerPanel = document.getElementById('hl7bViewerPanel');
+    if (!viewerPanel) return;
+
     // Create the main container
     const container = document.createElement('div');
     container.className = 'hl7-container hl7-collapsed-view';
@@ -448,9 +818,9 @@
     // Render first batch
     renderedCount = renderCollapsedBatch(container, messages, 0, messagesPerBatch, hideEmptyFields);
 
-    // Replace page content
-    document.body.innerHTML = '';
-    document.body.appendChild(container);
+    // Place content in viewer panel
+    viewerPanel.innerHTML = '';
+    viewerPanel.appendChild(container);
 
     // Add "Load More" button if there are more messages
     if (renderedCount < totalMessages) {
@@ -571,13 +941,29 @@
       }
     }
 
+    // Get patient name from PID.5 if available
+    let patientName = '';
+    const pidSegment = message.segments.find(s => s.segmentId === 'PID');
+    if (pidSegment && pidSegment.fields.length > 4) {
+      const nameField = pidSegment.fields[4]; // PID.5 (0-indexed: field 4)
+      if (nameField && nameField.trim()) {
+        patientName = nameField;
+      }
+    }
+
+    // Build message title
+    let messageTitle = `Message ${msgIndex + 1}: ${escapeHtml(messageType)}`;
+    if (patientName) {
+      messageTitle += `, ${escapeHtml(patientName)}`;
+    }
+
     // Message header
     const messageHeader = document.createElement('div');
     messageHeader.className = 'hl7-tree-header hl7-tree-message-header collapsed';
     messageHeader.innerHTML = `
       <span class="hl7-tree-toggle">&#9654;</span>
       <span class="hl7-tree-icon">&#128232;</span>
-      <span class="hl7-tree-title">Message ${msgIndex + 1}: ${escapeHtml(messageType)}</span>
+      <span class="hl7-tree-title">${messageTitle}</span>
       <span class="hl7-tree-count">${message.segments.length} segments</span>
     `;
     messageDiv.appendChild(messageHeader);
@@ -785,36 +1171,85 @@
   }
 
   /**
-   * Setup expand/collapse click listeners
+   * Setup expand/collapse click listeners (on document.body)
    */
   function setupCollapseListeners() {
     document.body.addEventListener('click', function(e) {
-      const header = e.target.closest('.hl7-tree-header');
-      if (!header) return;
-
-      const content = header.nextElementSibling;
-      if (!content || !content.classList.contains('hl7-tree-content')) return;
-
-      const isCollapsed = header.classList.contains('collapsed');
-
-      if (isCollapsed) {
-        // Expand
-        header.classList.remove('collapsed');
-        header.classList.add('expanded');
-        content.style.display = 'block';
-        // Update toggle icon
-        const toggle = header.querySelector('.hl7-tree-toggle');
-        if (toggle) toggle.innerHTML = '&#9660;';
-      } else {
-        // Collapse
-        header.classList.remove('expanded');
-        header.classList.add('collapsed');
-        content.style.display = 'none';
-        // Update toggle icon
-        const toggle = header.querySelector('.hl7-tree-toggle');
-        if (toggle) toggle.innerHTML = '&#9654;';
-      }
+      handleTreeClick(e);
     });
+  }
+
+  /**
+   * Setup expand/collapse click listeners scoped to a specific element
+   */
+  function setupCollapseListenersForElement(el) {
+    if (!el) return;
+    el.addEventListener('click', function(e) {
+      handleTreeClick(e);
+    });
+  }
+
+  /**
+   * Handle tree expand/collapse click
+   */
+  function handleTreeClick(e) {
+    const header = e.target.closest('.hl7-tree-header');
+    if (!header) return;
+
+    const content = header.nextElementSibling;
+    if (!content || !content.classList.contains('hl7-tree-content')) return;
+
+    const isCollapsed = header.classList.contains('collapsed');
+
+    if (isCollapsed) {
+      // Expand
+      header.classList.remove('collapsed');
+      header.classList.add('expanded');
+      content.style.display = 'block';
+      // Update toggle icon
+      const toggle = header.querySelector('.hl7-tree-toggle');
+      if (toggle) toggle.innerHTML = '&#9660;';
+    } else {
+      // Collapse
+      header.classList.remove('expanded');
+      header.classList.add('collapsed');
+      content.style.display = 'none';
+      // Update toggle icon
+      const toggle = header.querySelector('.hl7-tree-toggle');
+      if (toggle) toggle.innerHTML = '&#9654;';
+    }
+  }
+
+  /**
+   * Render HL7 content into a specific container element (for filtered messages viewer)
+   */
+  function renderHL7IntoContainer(container, content, viewMode) {
+    container.innerHTML = '';
+
+    // Normalize line endings: \r\n -> \n, then standalone \r -> \n
+    var normalizedContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    if (viewMode === 'collapsed') {
+      container.className = 'hl7-container hl7-collapsed-view';
+      const lines = normalizedContent.split('\n');
+      const messages = parseIntoMessages(lines);
+      renderCollapsedBatch(container, messages, 0, messages.length, false);
+    } else {
+      container.className = 'hl7-container hl7-standard-view';
+      const lines = normalizedContent.split('\n');
+      const messageGroups = groupLinesByMessage(lines);
+      renderStandardBatch(container, messageGroups, 0, messageGroups.length);
+
+      // Create and attach tooltip for standard view
+      let tooltip = container.querySelector('.hl7-tooltip');
+      if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'hl7-tooltip';
+        tooltip.style.display = 'none';
+        container.appendChild(tooltip);
+      }
+      setupTooltipListeners(tooltip);
+    }
   }
 
   /**
@@ -1081,6 +1516,9 @@
    * Render JSON in standard/textual view (formatted JSON)
    */
   function renderJSONStandardView(parsed, messagesPerBatch) {
+    const viewerPanel = document.getElementById('hl7bViewerPanel');
+    if (!viewerPanel) return;
+
     const container = document.createElement('div');
     container.className = 'hl7-container json-standard-view';
 
@@ -1093,9 +1531,9 @@
     // Render first batch
     renderedCount = renderJSONStandardBatch(container, items, 0, messagesPerBatch, isArray);
 
-    // Replace page content
-    document.body.innerHTML = '';
-    document.body.appendChild(container);
+    // Place content in viewer panel
+    viewerPanel.innerHTML = '';
+    viewerPanel.appendChild(container);
 
     // Add "Load More" button if there are more items
     if (renderedCount < totalItems) {
@@ -1246,6 +1684,9 @@
    * Render JSON in collapsed/tree view
    */
   function renderJSONCollapsedView(parsed, messagesPerBatch) {
+    const viewerPanel = document.getElementById('hl7bViewerPanel');
+    if (!viewerPanel) return;
+
     const container = document.createElement('div');
     container.className = 'hl7-container json-collapsed-view';
 
@@ -1258,9 +1699,9 @@
     // Render first batch
     renderedCount = renderJSONCollapsedBatch(container, items, 0, messagesPerBatch, isArray);
 
-    // Replace page content
-    document.body.innerHTML = '';
-    document.body.appendChild(container);
+    // Place content in viewer panel
+    viewerPanel.innerHTML = '';
+    viewerPanel.appendChild(container);
 
     // Add "Load More" button if there are more items
     if (renderedCount < totalItems) {
@@ -1302,11 +1743,6 @@
 
   /**
    * Create a tree node for JSON collapsed view
-   * @param {*} value - The JSON value
-   * @param {string} key - The key name
-   * @param {number} index - The index in parent array/object
-   * @param {boolean} isArrayItem - Whether this is a direct array item
-   * @param {string} parentPath - The Python path to the parent (for building full path)
    */
   function createJSONTreeNode(value, key, index, isArrayItem, parentPath = '') {
     const nodeDiv = document.createElement('div');
@@ -1318,24 +1754,18 @@
     // Build the Python path for this node
     let currentPath;
     if (parentPath === '' && key === 'root') {
-      // Root container - no path for the root itself
       currentPath = '';
     } else if (parentPath === '' && key.startsWith('[')) {
-      // Array index at root level (for JSON arrays)
       currentPath = key;
     } else if (parentPath === '') {
-      // First level object keys (direct children of root)
       currentPath = `['${key}']`;
     } else if (key.startsWith('[')) {
-      // Array index in nested structure
       currentPath = parentPath + key;
     } else {
-      // Object key in nested structure
       currentPath = parentPath + `['${key}']`;
     }
 
     if (isExpandable) {
-      // Expandable node (object or array)
       const header = document.createElement('div');
       header.className = 'hl7-tree-header json-tree-header collapsed';
 
@@ -1343,7 +1773,6 @@
       const typeLabel = valueType === 'array' ? `Array[${childCount}]` : `Object{${childCount}}`;
       const displayKey = isArrayItem ? `Item ${index + 1}` : key;
 
-      // Store the path for context menu (only if not root)
       if (currentPath) {
         header.dataset.jsonPath = currentPath;
         header.dataset.jsonValueType = valueType;
@@ -1356,12 +1785,10 @@
       `;
       nodeDiv.appendChild(header);
 
-      // Content (children)
       const content = document.createElement('div');
       content.className = 'hl7-tree-content';
       content.style.display = 'none';
 
-      // Use currentPath if set, otherwise empty string for root object's children
       const pathForChildren = currentPath || '';
 
       if (valueType === 'array') {
@@ -1378,11 +1805,9 @@
 
       nodeDiv.appendChild(content);
     } else {
-      // Leaf node (primitive value)
       nodeDiv.className += ' json-tree-leaf';
       const displayValue = formatJSONValue(value, valueType);
 
-      // Store the path for context menu
       if (currentPath) {
         nodeDiv.dataset.jsonPath = currentPath;
         nodeDiv.dataset.jsonValueType = valueType;
@@ -1422,25 +1847,16 @@
 
   /**
    * Convert a Python-style JSON path to Java-style method calls
-   * e.g., ['glossary']['GlossDiv']['title'] with valueType 'string'
-   * becomes getJSONObject("glossary").getJSONObject("GlossDiv").getString("title")
-   * @param {string} pythonPath - The Python path like ['key1']['key2'][0]
-   * @param {string} valueType - The type of the final value (string, number, boolean, object, array, null)
-   * @returns {string} Java-style method chain
    */
   function convertToJavaPath(pythonPath, valueType) {
-    // Parse the path into segments
-    // Matches ['key'] or [0] patterns
     const segmentRegex = /\['([^']+)'\]|\[(\d+)\]/g;
     const segments = [];
     let match;
 
     while ((match = segmentRegex.exec(pythonPath)) !== null) {
       if (match[1] !== undefined) {
-        // Named key: ['key']
         segments.push({ type: 'key', value: match[1] });
       } else if (match[2] !== undefined) {
-        // Array index: [0]
         segments.push({ type: 'index', value: parseInt(match[2], 10) });
       }
     }
@@ -1449,7 +1865,6 @@
       return '';
     }
 
-    // Build the Java path
     const parts = [];
 
     for (let i = 0; i < segments.length; i++) {
@@ -1459,24 +1874,18 @@
 
       if (segment.type === 'key') {
         if (isLast) {
-          // Last segment - use appropriate getter based on valueType
           parts.push(getJavaGetter(valueType, segment.value));
         } else if (nextSegment && nextSegment.type === 'index') {
-          // Next is array index, so this key leads to an array
           parts.push(`getJSONArray("${segment.value}")`);
         } else {
-          // Next is another key, so this leads to an object
           parts.push(`getJSONObject("${segment.value}")`);
         }
       } else if (segment.type === 'index') {
         if (isLast) {
-          // Last segment is array index - use appropriate getter
           parts.push(getJavaArrayGetter(valueType, segment.value));
         } else if (nextSegment && nextSegment.type === 'index') {
-          // Next is also array index (nested array)
           parts.push(`getJSONArray(${segment.value})`);
         } else {
-          // Next is a key, so this index returns an object
           parts.push(`getJSONObject(${segment.value})`);
         }
       }
@@ -1485,47 +1894,27 @@
     return parts.join('.');
   }
 
-  /**
-   * Get the appropriate Java getter method for a key based on value type
-   */
   function getJavaGetter(valueType, key) {
     switch (valueType) {
-      case 'string':
-        return `getString("${key}")`;
-      case 'number':
-        return `getDouble("${key}")`; // Using getDouble as it handles both int and float
-      case 'boolean':
-        return `getBoolean("${key}")`;
-      case 'object':
-        return `getJSONObject("${key}")`;
-      case 'array':
-        return `getJSONArray("${key}")`;
-      case 'null':
-        return `get("${key}")`; // null values use generic get
-      default:
-        return `get("${key}")`;
+      case 'string': return `getString("${key}")`;
+      case 'number': return `getDouble("${key}")`;
+      case 'boolean': return `getBoolean("${key}")`;
+      case 'object': return `getJSONObject("${key}")`;
+      case 'array': return `getJSONArray("${key}")`;
+      case 'null': return `get("${key}")`;
+      default: return `get("${key}")`;
     }
   }
 
-  /**
-   * Get the appropriate Java getter method for an array index based on value type
-   */
   function getJavaArrayGetter(valueType, index) {
     switch (valueType) {
-      case 'string':
-        return `getString(${index})`;
-      case 'number':
-        return `getDouble(${index})`;
-      case 'boolean':
-        return `getBoolean(${index})`;
-      case 'object':
-        return `getJSONObject(${index})`;
-      case 'array':
-        return `getJSONArray(${index})`;
-      case 'null':
-        return `get(${index})`;
-      default:
-        return `get(${index})`;
+      case 'string': return `getString(${index})`;
+      case 'number': return `getDouble(${index})`;
+      case 'boolean': return `getBoolean(${index})`;
+      case 'object': return `getJSONObject(${index})`;
+      case 'array': return `getJSONArray(${index})`;
+      case 'null': return `get(${index})`;
+      default: return `get(${index})`;
     }
   }
 
@@ -1533,7 +1922,6 @@
    * Setup custom context menu for JSON elements
    */
   function setupJSONContextMenu() {
-    // Create context menu element
     const contextMenu = document.createElement('div');
     contextMenu.className = 'json-context-menu';
     contextMenu.style.display = 'none';
@@ -1552,9 +1940,7 @@
     let currentPath = null;
     let currentValueType = null;
 
-    // Handle right-click on JSON elements
     document.body.addEventListener('contextmenu', function(e) {
-      // Find the closest element with a JSON path
       const pathElement = e.target.closest('[data-json-path]');
 
       if (pathElement) {
@@ -1562,12 +1948,10 @@
         currentPath = pathElement.dataset.jsonPath;
         currentValueType = pathElement.dataset.jsonValueType || 'object';
 
-        // Position and show the context menu
         contextMenu.style.left = e.pageX + 'px';
         contextMenu.style.top = e.pageY + 'px';
         contextMenu.style.display = 'block';
 
-        // Adjust position if menu would go off screen
         const menuRect = contextMenu.getBoundingClientRect();
         if (menuRect.right > window.innerWidth) {
           contextMenu.style.left = (e.pageX - menuRect.width) + 'px';
@@ -1578,7 +1962,6 @@
       }
     });
 
-    // Handle context menu item click
     contextMenu.addEventListener('click', function(e) {
       const menuItem = e.target.closest('.json-context-menu-item');
       if (menuItem && currentPath) {
@@ -1594,19 +1977,16 @@
       contextMenu.style.display = 'none';
     });
 
-    // Hide context menu when clicking elsewhere
     document.addEventListener('click', function(e) {
       if (!contextMenu.contains(e.target)) {
         contextMenu.style.display = 'none';
       }
     });
 
-    // Hide context menu on scroll
     document.addEventListener('scroll', function() {
       contextMenu.style.display = 'none';
     });
 
-    // Hide context menu on Escape key
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') {
         contextMenu.style.display = 'none';
@@ -1614,13 +1994,9 @@
     });
   }
 
-  /**
-   * Copy text to clipboard
-   */
   function copyToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).catch(function(err) {
-        // Fallback for older browsers
         fallbackCopyToClipboard(text);
       });
     } else {
@@ -1628,9 +2004,6 @@
     }
   }
 
-  /**
-   * Fallback copy method for browsers without clipboard API
-   */
   function fallbackCopyToClipboard(text) {
     const textArea = document.createElement('textarea');
     textArea.value = text;
@@ -1648,11 +2021,7 @@
     document.body.removeChild(textArea);
   }
 
-  /**
-   * Show a brief notification that text was copied
-   */
   function showCopyNotification(message) {
-    // Remove any existing notification
     const existing = document.querySelector('.json-copy-notification');
     if (existing) {
       existing.remove();
@@ -1663,12 +2032,10 @@
     notification.textContent = message;
     document.body.appendChild(notification);
 
-    // Fade in
     setTimeout(function() {
       notification.classList.add('visible');
     }, 10);
 
-    // Fade out and remove
     setTimeout(function() {
       notification.classList.remove('visible');
       setTimeout(function() {
